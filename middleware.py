@@ -1,12 +1,29 @@
 from tyk.decorators import *
 from gateway import TykGateway as tyk
-from time import time
+from google.protobuf.json_format import MessageToDict, MessageToJson
+import json
+
+@Hook
+def PostKeyAuth(request, session, metadata, spec):
+    tyk.log("-----PostKeyAuth is called-----", "info")
+
+    addConfigDataToRequestBody(request, spec['config_data'])
+
+    tyk.log("request info: {0}".format(MessageToJson(request.object)), "info")  
+    return request, session, metadata
+
+@Hook
+def ResponseHook(request, response, session, metadata, spec):
+    tyk.log("ResponseHook is called", "info")
+
+    addConfigDataToResponseBody(response, spec['config_data'])
+
+    tyk.log("response info: {0}".format(MessageToJson(response)), "info")  
+    return response
 
 @Hook
 def PreHook(request, session, spec):
     tyk.log("PreHook is called", "info")
-    # Inject a header:
-    request.add_header("testheader", "testvalue")
     return request, session
 
 @Hook
@@ -17,42 +34,44 @@ def PostHook(request, session, spec):
 @Hook
 def AuthCheck(request, session, metadata, spec):
     tyk.log("AuthCheck is called", "info")
-
-    # request.get_header is a helper method, to get the full header list, use request.object.headers
-    auth_header = request.get_header('Authorization')
-    if auth_header == '47a0c79c427728b3df4af62b9228c8ae':
-        tyk.log("AuthCheck is successful", "info")
-        # Initialize a session object:
-        session.rate = 1000.0
-        session.per = 1.0
-        # Set a deadline for the ID extractor, in this case we use the current UNIX timestamp + 60 seconds:
-        session.id_extractor_deadline = int(time()) + 60
-        # Attach the token, this is required (used internally by Tyk):
-        metadata["token"] = "47a0c79c427728b3df4af62b9228c8ae"
-
-        # Inject additional metadata:
-        metadata["username"] = "testuser"
-        return request, session, metadata
-    tyk.log("AuthCheck failed: invalid token", "error")
-
-    # Set a custom error:
-    request.object.return_overrides.response_error = 'Invalid authentication'
-    request.object.return_overrides.response_code = 403
     return request, session, metadata
 
-@Hook
-def PostKeyAuth(request, session, spec):
-    tyk.log("PostKeyAuth is called", "info")
+# ------------------------------------------------
 
-    # Log the additional metadata (set in AuthCheck):
-    username = session.metadata["username"]
-    tyk.log("PostKeyAuth: user '{0}' was authenticated".format(username), "info")
-    return request, session
+def addConfigDataToRequestBody(request, config_data):
+    tyk.log("Add config data to request body", "info")
 
-@Hook
-def ResponseHook(request, response, session, metadata, spec):
-    tyk.log("ResponseHook is called", "info")
-    # In this hook we have access to the response object, to inspect it, uncomment the following line:
-    # print(response)
-    tyk.log("ResponseHook: upstream returned {0}".format(response.status_code), "info")
-    return response
+    req_body = getRequestBody(request)
+    json_config_data = json.loads(config_data)
+
+    for key in json_config_data['data']['field_for_request']:
+        req_body[key] = json_config_data['data']['field_for_request'][key]
+        
+
+    new_req_body = json.dumps(req_body) 
+    request.object.body = new_req_body
+    request.object.raw_body = bytes(new_req_body, 'utf-8')
+
+def getRequestBody(request):
+    tyk_request = MessageToDict(request.object)
+    req_body = json.loads(tyk_request["body"])
+    return req_body
+
+def addConfigDataToResponseBody(response, config_data):
+    tyk.log("Add config data to response body", "info")
+
+    res_body = getResponseBody(response)
+    json_config_data = json.loads(config_data)
+
+    for key in json_config_data['data']['field_for_response']:
+        res_body[key] = json_config_data['data']['field_for_response'][key]
+
+    new_res_body = json.dumps(res_body) 
+    response.body = new_res_body
+    response.raw_body = bytes(new_res_body, 'utf-8')
+
+def getResponseBody(response):
+    tyk_response = MessageToDict(response)
+    res_body = json.loads(tyk_response["body"])
+    return res_body
+
